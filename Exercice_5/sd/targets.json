@@ -1,0 +1,16 @@
+[
+  {
+    "targets": ["node-exporter:9100"],
+    "labels": {
+      "job": "node",
+      "env": "lab"
+    }
+  },
+  {
+    "targets": ["prometheus:9090"],
+    "labels": {
+      "job": "prometheus-sd",
+      "env": "lab"
+    }
+  }
+]

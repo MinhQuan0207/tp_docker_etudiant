@@ -1,0 +1,7 @@
+# Données Docker locales
+**/data/
+**/*.tmp
+
+# Fichiers système
+.DS_Store
+Thumbs.db
