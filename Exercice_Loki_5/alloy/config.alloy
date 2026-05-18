@@ -1,0 +1,27 @@
+local.file_match "http_logs" {
+  path_targets = [{
+    __path__    = "/var/log/apps/*.log",
+    job         = "http-logs",
+    environment = "development",
+  }]
+}
+
+loki.source.file "http_files" {
+  targets    = local.file_match.http_logs.targets
+  forward_to = [loki.process.add_labels.receiver]
+}
+
+loki.process "add_labels" {
+  stage.static_labels {
+    values = {
+      job = "http-logs",
+    }
+  }
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

@@ -1,0 +1,59 @@
+// --- Collecte des fichiers JSON ---
+local.file_match "json_logs" {
+  path_targets = [{
+    __path__    = "/var/log/apps/*.log",
+    job         = "app-json",
+    environment = "development",
+  }]
+}
+
+loki.source.file "json_files" {
+  targets    = local.file_match.json_logs.targets
+  forward_to = [loki.process.parse_json.receiver]
+}
+
+loki.process "parse_json" {
+
+  // 1. Parser le JSON de chaque ligne
+  stage.json {
+    expressions = {
+      level   = "level",
+      user_id = "user_id",
+      msg     = "msg",
+    }
+  }
+
+  // 2. Promouvoir level et user_id en labels temporaires
+  stage.labels {
+    values = {
+      level   = "level",
+      user_id = "user_id",
+    }
+  }
+
+  // 3. Supprimer toutes les lignes debug
+  stage.drop {
+    source = "level"
+    value  = "debug"
+  }
+
+  // 4. Ajouter un label statique job
+  stage.static_labels {
+    values = {
+      job = "app-json",
+    }
+  }
+
+  // 5. Supprimer user_id des labels indexés (forte cardinalité !)
+  stage.label_drop {
+    values = ["user_id"]
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

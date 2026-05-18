@@ -1,0 +1,43 @@
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "docker_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.containers.targets
+  forward_to = [loki.process.relabel.receiver]
+}
+
+loki.process "relabel" {
+
+  stage.docker {}
+
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  stage.static_labels {
+    values = {
+      job         = "docker",
+      environment = "development",
+    }
+  }
+
+  stage.regex {
+    expression = "(?i)(level|loglevel|severity)[=: ]+(?P<loglevel>debug|info|warn|warning|error|critical)"
+  }
+
+  stage.labels {
+    values = {
+      loglevel = "loglevel",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

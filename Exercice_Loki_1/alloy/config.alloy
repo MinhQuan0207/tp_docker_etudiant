@@ -1,0 +1,47 @@
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+loki.source.docker "docker_logs" {
+  host       = "unix:///var/run/docker.sock"
+  targets    = discovery.docker.containers.targets
+  forward_to = [loki.process.relabel.receiver]
+}
+
+loki.process "relabel" {
+
+  // 1. Parse les métadonnées Docker (ajoute container, image, etc.)
+  stage.docker {}
+
+  // 2. Supprimer le label "filename" (fort cardinalité, inutile ici)
+  stage.label_drop {
+    values = ["filename"]
+  }
+
+  // 3. Ajouter un label statique environment=development
+  stage.static_labels {
+    values = {
+      environment = "development",
+      job         = "docker",
+    }
+  }
+
+  // 4. Extraire dynamiquement loglevel depuis le contenu du log
+  stage.regex {
+    expression = "(?i)(level|loglevel|severity)[=: ]+(?P<loglevel>debug|info|warn|warning|error|critical)"
+  }
+
+  stage.labels {
+    values = {
+      loglevel = "loglevel",
+    }
+  }
+
+  forward_to = [loki.write.default.receiver]
+}
+
+loki.write "default" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
