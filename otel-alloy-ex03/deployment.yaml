@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: demo
+  namespace: default
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+        - name: demo
+          image: demo-otel:v1
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 5000
+          env:
+            # Nom du service tel qu'il apparaîtra dans les traces
+            - name: OTEL_SERVICE_NAME
+              value: "demo"
+            # Endpoint OTLP vers Alloy (HTTP sur 4318)
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: "http://alloy.observability.svc:4318"
+            # Protocole HTTP (plus simple que gRPC pour ce cas)
+            - name: OTEL_EXPORTER_OTLP_PROTOCOL
+              value: "http/protobuf"
+            # Active les 3 signaux
+            - name: OTEL_LOGS_EXPORTER
+              value: "otlp"
+            - name: OTEL_METRICS_EXPORTER
+              value: "otlp"
+            - name: OTEL_TRACES_EXPORTER
+              value: "otlp"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: demo
+  namespace: default
+spec:
+  selector:
+    app: demo
+  ports:
+    - port: 5000
+      targetPort: 5000

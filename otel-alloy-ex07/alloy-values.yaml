@@ -1,0 +1,165 @@
+alloy:
+  extraArgs:
+    - --stability.level=experimental
+
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  mounts:
+    varlog: true
+
+  configMap:
+    content: |
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output {
+          logs    = [otelcol.processor.batch.default.input]
+          traces  = [otelcol.processor.batch.default.input]
+          metrics = [otelcol.processor.attributes.metrics.input]
+        }
+      }
+
+      otelcol.processor.batch "default" {
+        output {
+          logs   = [otelcol.processor.attributes.default.input]
+          traces = [otelcol.processor.attributes.default.input]
+        }
+      }
+
+      otelcol.processor.attributes "default" {
+        action {
+          key    = "deployment.environment"
+          value  = "lab"
+          action = "insert"
+        }
+        output {
+          logs   = [otelcol.exporter.debug.default.input]
+          traces = [otelcol.exporter.debug.default.input]
+        }
+      }
+
+      otelcol.exporter.debug "default" {
+        verbosity = "detailed"
+      }
+
+      otelcol.processor.attributes "metrics" {
+        action {
+          key    = "team"
+          value  = "platform"
+          action = "insert"
+        }
+        action {
+          key    = "deployment.environment"
+          value  = "lab"
+          action = "insert"
+        }
+        output {
+          metrics = [otelcol.exporter.prometheus.to_mimir.input]
+        }
+      }
+
+      otelcol.exporter.prometheus "to_mimir" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+      }
+
+      discovery.kubernetes "node_exporter" {
+        role = "endpoints"
+        namespaces { names = ["observability"] }
+        selectors {
+          role  = "endpoints"
+          label = "app.kubernetes.io/name=prometheus-node-exporter"
+        }
+      }
+
+      discovery.relabel "node_exporter" {
+        targets = discovery.kubernetes.node_exporter.targets
+        rule {
+          source_labels = ["__meta_kubernetes_endpoint_port_name"]
+          regex         = "metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "node_exporter" {
+        targets         = discovery.relabel.node_exporter.output
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+        scrape_interval = "30s"
+        job_name        = "node-exporter"
+      }
+
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mimir.observability.svc:9009/api/v1/push"
+        }
+      }
+
+      discovery.kubernetes "pods" {
+        role = "pod"
+      }
+
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+        rule {
+          source_labels = ["__meta_kubernetes_pod_phase"]
+          regex         = "Pending|Succeeded|Failed|Completed"
+          action        = "drop"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_uid", "__meta_kubernetes_pod_container_name"]
+          separator    = "/"
+          target_label = "__path__"
+          replacement  = "/var/log/pods/*$1/*.log"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_label_app"]
+          target_label  = "app"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.pods.receiver]
+      }
+
+      loki.process "pods" {
+        stage.match {
+          selector = "{app=\"demo\"}"
+          stage.labels {
+            mapping = { level = "" }
+          }
+        }
+        forward_to = [loki.write.loki.receiver]
+      }
+
+      loki.write "loki" {
+        endpoint {
+          url = "http://loki.observability.svc:3100/loki/api/v1/push"
+        }
+      }
+
+controller:
+  type: daemonset

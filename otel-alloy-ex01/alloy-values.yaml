@@ -1,0 +1,32 @@
+alloy:
+  # Activer les composants expérimentaux (nécessaire pour otelcol.exporter.debug)
+  extraArgs:
+    - --stability.level=experimental
+
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  configMap:
+    content: |
+      // Receiver OTLP : écoute gRPC (4317) et HTTP (4318)
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output {
+          metrics = [otelcol.exporter.debug.default.input]
+          logs    = [otelcol.exporter.debug.default.input]
+          traces  = [otelcol.exporter.debug.default.input]
+        }
+      }
+
+      // Exporteur debug : affiche les signaux reçus dans les logs Alloy
+      otelcol.exporter.debug "default" {
+        verbosity = "detailed"
+      }

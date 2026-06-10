@@ -1,0 +1,114 @@
+alloy:
+  extraArgs:
+    - --stability.level=experimental
+
+  extraPorts:
+    - name: otlp-grpc
+      port: 4317
+      targetPort: 4317
+      protocol: TCP
+    - name: otlp-http
+      port: 4318
+      targetPort: 4318
+      protocol: TCP
+
+  configMap:
+    content: |
+      // ── Receiver OTLP ────────────────────────────────────────────────────
+      otelcol.receiver.otlp "default" {
+        grpc { endpoint = "0.0.0.0:4317" }
+        http { endpoint = "0.0.0.0:4318" }
+        output {
+          // Logs et traces → pipeline debug (inchangée)
+          logs   = [otelcol.processor.batch.default.input]
+          traces = [otelcol.processor.batch.default.input]
+          // Métriques → nouveau processor dédié
+          metrics = [otelcol.processor.attributes.metrics.input]
+        }
+      }
+
+      // ── Pipeline logs/traces (exercices précédents) ───────────────────────
+      otelcol.processor.batch "default" {
+        output {
+          logs   = [otelcol.processor.attributes.default.input]
+          traces = [otelcol.processor.attributes.default.input]
+        }
+      }
+
+      otelcol.processor.attributes "default" {
+        action {
+          key    = "deployment.environment"
+          value  = "lab"
+          action = "insert"
+        }
+        output {
+          logs   = [otelcol.exporter.debug.default.input]
+          traces = [otelcol.exporter.debug.default.input]
+        }
+      }
+
+      otelcol.exporter.debug "default" {
+        verbosity = "detailed"
+      }
+
+      // ── Pipeline métriques OTLP → Mimir ──────────────────────────────────
+      // Processor attributes : ajoute team=platform et deployment.environment=lab
+      otelcol.processor.attributes "metrics" {
+        action {
+          key    = "team"
+          value  = "platform"
+          action = "insert"
+        }
+        action {
+          key    = "deployment.environment"
+          value  = "lab"
+          action = "insert"
+        }
+        output {
+          metrics = [otelcol.exporter.prometheus.to_mimir.input]
+        }
+      }
+
+      // Bridge OTel → Prometheus natif
+      otelcol.exporter.prometheus "to_mimir" {
+        forward_to = [prometheus.remote_write.mimir.receiver]
+      }
+
+      // ── Pipeline Prometheus scrape node-exporter → Mimir ─────────────────
+      discovery.kubernetes "node_exporter" {
+        role = "endpoints"
+        namespaces {
+          names = ["observability"]
+        }
+        selectors {
+          role  = "endpoints"
+          label = "app.kubernetes.io/name=prometheus-node-exporter"
+        }
+      }
+
+      discovery.relabel "node_exporter" {
+        targets = discovery.kubernetes.node_exporter.targets
+        rule {
+          source_labels = ["__meta_kubernetes_endpoint_port_name"]
+          regex         = "metrics"
+          action        = "keep"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_node_name"]
+          target_label  = "node"
+        }
+      }
+
+      prometheus.scrape "node_exporter" {
+        targets         = discovery.relabel.node_exporter.output
+        forward_to      = [prometheus.remote_write.mimir.receiver]
+        scrape_interval = "30s"
+        job_name        = "node-exporter"
+      }
+
+      // Remote write commun (node-exporter + métriques OTel)
+      prometheus.remote_write "mimir" {
+        endpoint {
+          url = "http://mimir.observability.svc:9009/api/v1/push"
+        }
+      }
